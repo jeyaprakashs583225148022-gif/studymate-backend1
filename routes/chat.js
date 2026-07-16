@@ -35,6 +35,7 @@ router.post("/chat", async (req, res) => {
       body: JSON.stringify({
         model: OPENROUTER_MODEL,
         temperature: 0.3,
+        max_tokens: 700, // keeps answers well within a small/free OpenRouter credit balance
         messages: [
           {
             role: "system",
@@ -48,14 +49,28 @@ router.post("/chat", async (req, res) => {
     if (!upstream.ok) {
       let detail = "";
       try { detail = (await upstream.json())?.error?.message || ""; } catch (_) { /* ignore */ }
+      console.error("OpenRouter request failed:", upstream.status, detail);
       return res.status(502).json({ error: "Upstream AI request failed" + (detail ? ": " + detail : "") });
     }
 
     const data = await upstream.json();
-    const answer = data?.choices?.[0]?.message?.content;
+    let answer = data?.choices?.[0]?.message?.content;
 
     if (!answer) {
       return res.status(502).json({ error: "No answer returned from the AI provider." });
+    }
+
+    // Some models occasionally leak internal moderation/classifier tags
+    // (e.g. "User Safety: safe") instead of, or alongside, a real answer.
+    // Strip any such lines out before this ever reaches the user.
+    answer = answer
+      .split("\n")
+      .filter(line => !/^\s*(user safety|safety|moderation|classification)\s*:/i.test(line))
+      .join("\n")
+      .trim();
+
+    if (!answer) {
+      return res.status(502).json({ error: "The model returned no usable answer." });
     }
 
     return res.json({ answer });
