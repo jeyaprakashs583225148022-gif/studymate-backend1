@@ -56,7 +56,7 @@ router.post("/chat", async (req, res) => {
       body: JSON.stringify({
         model: OPENROUTER_MODEL,
         temperature: 0.3,
-        max_tokens: 700, // keeps answers well within a small/free OpenRouter credit balance
+        max_tokens: 2000, // higher ceiling so full code answers aren't cut off mid-response
         messages: [
           {
             role: "system",
