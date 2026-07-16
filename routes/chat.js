@@ -6,7 +6,7 @@ const router = express.Router();
 //  the environment (see .env) and never sent to the browser.
 // ============================================================
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "openai/gpt-4o-mini";
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "openai/gpt-4o";
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 router.post("/chat", async (req, res) => {
@@ -34,10 +34,11 @@ router.post("/chat", async (req, res) => {
       },
       body: JSON.stringify({
         model: OPENROUTER_MODEL,
+        temperature: 0.3,
         messages: [
           {
             role: "system",
-            content: "You are a concise, friendly study tutor. Answer clearly for a student, using short paragraphs or a short list where helpful."
+            content: "You are a careful, accurate study tutor. Prioritize correctness over confidence: think through facts, dates, formulas, and calculations step by step before answering, and double-check numeric or logical results before giving them. If you are not sure of something, say so plainly instead of guessing or making it up. Never invent facts, sources, or numbers. Answer clearly for a student. Format your answer for readability: use short paragraphs (2-4 sentences), and switch to a bullet list (lines starting with \"- \") or a numbered list (\"1. \", \"2. \") whenever you're listing steps, parts, or examples. Use **bold** for key terms only, not whole sentences. Don't use headings, tables, or code blocks unless the question is specifically about code."
           },
           { role: "user", content: question }
         ]
