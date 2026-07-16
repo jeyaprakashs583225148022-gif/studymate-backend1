@@ -19,6 +19,27 @@ router.post("/chat", async (req, res) => {
     if (question.length > 2000) {
       return res.status(400).json({ error: "Question is too long (max 2000 characters)." });
     }
+
+    // Optional prior turns of this conversation, sent by the frontend so the
+    // model can resolve follow-ups like "where was he born". Validate/limit
+    // strictly since this is client-controlled input.
+    const MAX_HISTORY_MESSAGES = 12;
+    const MAX_HISTORY_CHARS = 4000;
+    const rawHistory = Array.isArray(req.body?.history) ? req.body.history : [];
+    let historyCharBudget = MAX_HISTORY_CHARS;
+    const history = rawHistory
+      .slice(-MAX_HISTORY_MESSAGES)
+      .map(m => {
+        const role = m?.role === "assistant" ? "assistant" : "user";
+        let content = (m?.content || "").toString().trim();
+        if (!content) return null;
+        if (content.length > historyCharBudget) content = content.slice(0, historyCharBudget);
+        historyCharBudget -= content.length;
+        if (historyCharBudget <= 0) return null;
+        return { role, content };
+      })
+      .filter(Boolean);
+
     if (!OPENROUTER_API_KEY) {
       // Server isn't configured yet — tell the caller clearly instead of leaking a stack trace.
       return res.status(500).json({ error: "Server is not configured with an API key yet." });
@@ -39,8 +60,9 @@ router.post("/chat", async (req, res) => {
         messages: [
           {
             role: "system",
-            content: "You are a careful, accurate study tutor. Prioritize correctness over confidence: think through facts, dates, formulas, and calculations step by step before answering, and double-check numeric or logical results before giving them. If you are not sure of something, say so plainly instead of guessing or making it up. Never invent facts, sources, or numbers. Answer clearly for a student. Format your answer for readability: use short paragraphs (2-4 sentences), and switch to a bullet list (lines starting with \"- \") or a numbered list (\"1. \", \"2. \") whenever you're listing steps, parts, or examples. Use **bold** for key terms only, not whole sentences. Don't use headings, tables, or code blocks unless the question is specifically about code."
+            content: "You are a careful, accurate study tutor. Prioritize correctness over confidence: think through facts, dates, formulas, and calculations step by step before answering, and double-check numeric or logical results before giving them. If you are not sure of something, say so plainly instead of guessing or making it up. Never invent facts, sources, or numbers. Answer clearly for a student. Format your answer for readability: use short paragraphs (2-4 sentences), and switch to a bullet list (lines starting with \"- \") or a numbered list (\"1. \", \"2. \") whenever you're listing steps, parts, or examples. Use **bold** for key terms only, not whole sentences. Don't use headings, tables, or code blocks unless the question is specifically about code. Earlier turns of this conversation may be included before the latest question — use them to resolve references like \"he\", \"that\", or \"the second one\", and to keep answers consistent with what was already said."
           },
+          ...history,
           { role: "user", content: question }
         ]
       })
