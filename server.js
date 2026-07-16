@@ -8,6 +8,11 @@ const chatRoute = require("./routes/chat");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Render (and most hosts) sit behind a reverse proxy, which sets the
+// X-Forwarded-For header. Without this, express-rate-limit throws a
+// validation error on every request and the API returns 502s.
+app.set("trust proxy", 1);
+
 // --- CORS: only allow your own frontend(s) to call this API ---
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "*")
   .split(",")
