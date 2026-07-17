@@ -5,9 +5,9 @@ const router = express.Router();
 //  This is the ONLY place the API key is used. It is read from
 //  the environment (see .env) and never sent to the browser.
 // ============================================================
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "openai/gpt-4o";
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const GROQ_MODEL = process.env.GROQ_MODEL || "openai/gpt-oss-20b";
+const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 
 router.post("/chat", async (req, res) => {
   try {
@@ -40,21 +40,19 @@ router.post("/chat", async (req, res) => {
       })
       .filter(Boolean);
 
-    if (!OPENROUTER_API_KEY) {
+    if (!GROQ_API_KEY) {
       // Server isn't configured yet — tell the caller clearly instead of leaking a stack trace.
       return res.status(500).json({ error: "Server is not configured with an API key yet." });
     }
 
-    const upstream = await fetch(OPENROUTER_URL, {
+    const upstream = await fetch(GROQ_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": "Bearer " + OPENROUTER_API_KEY, // <-- key added here, server-side only
-        "HTTP-Referer": process.env.PUBLIC_SITE_URL || "https://studymate.ai",
-        "X-Title": "StudyMate AI"
+        "Authorization": "Bearer " + GROQ_API_KEY // <-- key added here, server-side only
       },
       body: JSON.stringify({
-        model: OPENROUTER_MODEL,
+        model: GROQ_MODEL,
         temperature: 0.3,
         max_tokens: 2000, // higher ceiling so full code answers aren't cut off mid-response
         messages: [
@@ -71,7 +69,7 @@ router.post("/chat", async (req, res) => {
     if (!upstream.ok) {
       let detail = "";
       try { detail = (await upstream.json())?.error?.message || ""; } catch (_) { /* ignore */ }
-      console.error("OpenRouter request failed:", upstream.status, detail);
+      console.error("Groq request failed:", upstream.status, detail);
       return res.status(502).json({ error: "Upstream AI request failed" + (detail ? ": " + detail : "") });
     }
 
