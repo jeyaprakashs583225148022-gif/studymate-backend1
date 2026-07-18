@@ -1,24 +1,13 @@
 const express = require("express");
 const router = express.Router();
 
-// ============================================================
-//  API credentials â€” all read from environment variables.
-//  Never hardcode keys here. Never commit .env to git.
-// ============================================================
-const GROQ_API_KEY        = process.env.GROQ_API_KEY;
-const GROQ_MODEL          = process.env.GROQ_MODEL || "openai/gpt-oss-20b";
-const GROQ_URL            = "https://api.groq.com/openai/v1/chat/completions";
+const GROQ_API_KEY   = process.env.GROQ_API_KEY;
+const GROQ_MODEL     = process.env.GROQ_MODEL || "openai/gpt-oss-20b";
+const GROQ_URL       = "https://api.groq.com/openai/v1/chat/completions";
 
-const BRAVE_API_KEY       = process.env.BRAVE_SEARCH_API_KEY;
-const BRAVE_SEARCH_URL    = "https://api.search.brave.com/res/v1/web/search";
+const TAVILY_API_KEY = process.env.TAVILY_API_KEY;
+const TAVILY_URL     = "https://api.tavily.com/search";
 
-// ============================================================
-//  Decide if a question actually needs a live web search.
-//  Questions about current events, news, prices, recent dates,
-//  or anything time-sensitive get searched. Pure study/concept
-//  questions ("what is photosynthesis?") skip the search so the
-//  answer arrives faster and doesn't waste quota.
-// ============================================================
 const REALTIME_PATTERNS = [
   /\b(today|tonight|this (week|month|year)|right now|at the moment|currently|now)\b/i,
   /\b(latest|recent|new|update|just (released|announced|happened))\b/i,
@@ -27,65 +16,62 @@ const REALTIME_PATTERNS = [
   /\b(price|cost|rate|stock|crypto|bitcoin|market)\b/i,
   /\b(who (is|are|was|were) (the )?(current|new|latest|present))\b/i,
   /\b(when (is|was|will) .{0,40} (held|happen|start|end|release|come out))\b/i,
-  /\b(20(2[4-9]|[3-9]\d))\b/,   // years 2024 and beyond
+  /\b(20(2[4-9]|[3-9]\d))\b/,
   /\b(exam date|result|syllabus|admit card|cutoff|notification)\b/i,
   /\b(election|government|minister|president|prime minister|CEO|appointed)\b/i,
   /\b(score|match|tournament|fixture|ipl|world cup|olympics)\b/i,
 ];
 
 function needsSearch(question) {
-  if (!BRAVE_API_KEY) return false;
+  if (!TAVILY_API_KEY) return false;
   return REALTIME_PATTERNS.some(re => re.test(question));
 }
 
-// ============================================================
-//  Fetch live search results from Brave Search API.
-//  Returns a plain-text block with titles + snippets so the
-//  model can read them as context. Returns "" on any failure
-//  so the main handler can fall back gracefully.
-// ============================================================
 async function fetchSearchContext(query) {
   try {
-    const url = new URL(BRAVE_SEARCH_URL);
-    url.searchParams.set("q", query);
-    url.searchParams.set("count", "5");
-    url.searchParams.set("safesearch", "moderate");
-    url.searchParams.set("text_decorations", "false");
-
-    const res = await fetch(url.toString(), {
+    const res = await fetch(TAVILY_URL, {
+      method: "POST",
       headers: {
-        "Accept": "application/json",
-        "Accept-Encoding": "gzip",
-        "X-Subscription-Token": BRAVE_API_KEY
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + TAVILY_API_KEY
       },
+      body: JSON.stringify({
+        query,
+        max_results: 5,
+        search_depth: "basic",
+        include_answer: true
+      }),
       signal: AbortSignal.timeout(6000)
     });
 
     if (!res.ok) {
-      console.warn("Brave Search returned", res.status);
+      console.warn("Tavily search returned", res.status);
       return "";
     }
 
     const data = await res.json();
-    const results = data?.web?.results;
-    if (!Array.isArray(results) || !results.length) return "";
 
-    // Format as numbered list so the model can cite sources by number
+    let context = "";
+    if (data.answer) {
+      context += `Summary: ${data.answer}\n\n`;
+    }
+
+    const results = Array.isArray(data.results) ? data.results : [];
+    if (!results.length && !context) return "";
+
     const lines = results.map((item, i) =>
-      `[${i + 1}] ${item.title}\n${item.description || ""}\nSource: ${item.url}`
+      `[${i + 1}] ${item.title}\n${item.content || ""}\nSource: ${item.url}`
     );
 
-    return lines.join("\n\n");
+    context += lines.join("\n\n");
+    return context;
 
   } catch (err) {
-    console.warn("Brave Search error:", err.message);
-    return "";   // non-fatal â€” answer without search context
+    console.warn("Tavily search error:", err.message);
+    return "";
   }
 }
 
-// ============================================================
-//  POST /chat
-// ============================================================
 router.post("/chat", async (req, res) => {
   try {
     const question = (req.body?.question || "").toString().trim();
@@ -97,7 +83,6 @@ router.post("/chat", async (req, res) => {
       return res.status(400).json({ error: "Question is too long (max 2000 characters)." });
     }
 
-    // Validate and trim conversation history sent by the frontend.
     const MAX_HISTORY_MESSAGES = 12;
     const MAX_HISTORY_CHARS    = 4000;
     const rawHistory = Array.isArray(req.body?.history) ? req.body.history : [];
@@ -119,7 +104,6 @@ router.post("/chat", async (req, res) => {
       return res.status(500).json({ error: "Server is not configured with an API key yet." });
     }
 
-    // --- Optional: Brave Search for realtime context ---
     let searchContext = "";
     let searchWasUsed = false;
     if (needsSearch(question)) {
@@ -127,9 +111,6 @@ router.post("/chat", async (req, res) => {
       searchWasUsed = !!searchContext;
     }
 
-    // Build the system prompt. If we have live search results, inject them
-    // so the model grounds its answer in fresh data. Otherwise the model
-    // uses its own training knowledge (fine for timeless study topics).
     const basePersonality =
       "You are a careful, accurate study tutor. " +
       "Prioritize correctness over confidence: think through facts, dates, formulas, " +
@@ -191,7 +172,6 @@ router.post("/chat", async (req, res) => {
       return res.status(502).json({ error: "No answer returned from the AI provider." });
     }
 
-    // Strip any internal moderation/classifier lines some models leak.
     answer = answer
       .split("\n")
       .filter(line => !/^\s*(user safety|safety|moderation|classification)\s*:/i.test(line))
