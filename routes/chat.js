@@ -2,16 +2,15 @@ const express = require("express");
 const router = express.Router();
 
 // ============================================================
-//  API credentials — all read from environment variables.
+//  API credentials â€” all read from environment variables.
 //  Never hardcode keys here. Never commit .env to git.
 // ============================================================
-const GROQ_API_KEY          = process.env.GROQ_API_KEY;
-const GROQ_MODEL            = process.env.GROQ_MODEL || "openai/gpt-oss-20b";
-const GROQ_URL              = "https://api.groq.com/openai/v1/chat/completions";
+const GROQ_API_KEY        = process.env.GROQ_API_KEY;
+const GROQ_MODEL          = process.env.GROQ_MODEL || "openai/gpt-oss-20b";
+const GROQ_URL            = "https://api.groq.com/openai/v1/chat/completions";
 
-const GOOGLE_SEARCH_API_KEY = process.env.GOOGLE_SEARCH_API_KEY;
-const GOOGLE_SEARCH_CX      = process.env.GOOGLE_SEARCH_ENGINE_ID;
-const GOOGLE_SEARCH_URL     = "https://www.googleapis.com/customsearch/v1";
+const BRAVE_API_KEY       = process.env.BRAVE_SEARCH_API_KEY;
+const BRAVE_SEARCH_URL    = "https://api.search.brave.com/res/v1/web/search";
 
 // ============================================================
 //  Decide if a question actually needs a live web search.
@@ -35,44 +34,52 @@ const REALTIME_PATTERNS = [
 ];
 
 function needsSearch(question) {
-  if (!GOOGLE_SEARCH_API_KEY || !GOOGLE_SEARCH_CX) return false;
+  if (!BRAVE_API_KEY) return false;
   return REALTIME_PATTERNS.some(re => re.test(question));
 }
 
 // ============================================================
-//  Fetch the top Google search results for a query.
+//  Fetch live search results from Brave Search API.
 //  Returns a plain-text block with titles + snippets so the
 //  model can read them as context. Returns "" on any failure
 //  so the main handler can fall back gracefully.
 // ============================================================
 async function fetchSearchContext(query) {
   try {
-    const url = new URL(GOOGLE_SEARCH_URL);
-    url.searchParams.set("key", GOOGLE_SEARCH_API_KEY);
-    url.searchParams.set("cx",  GOOGLE_SEARCH_CX);
-    url.searchParams.set("q",   query);
-    url.searchParams.set("num", "5");          // top 5 results is plenty
-    url.searchParams.set("safe", "active");
+    const url = new URL(BRAVE_SEARCH_URL);
+    url.searchParams.set("q", query);
+    url.searchParams.set("count", "5");
+    url.searchParams.set("safesearch", "moderate");
+    url.searchParams.set("text_decorations", "false");
 
-    const res = await fetch(url.toString(), { signal: AbortSignal.timeout(5000) });
+    const res = await fetch(url.toString(), {
+      headers: {
+        "Accept": "application/json",
+        "Accept-Encoding": "gzip",
+        "X-Subscription-Token": BRAVE_API_KEY
+      },
+      signal: AbortSignal.timeout(6000)
+    });
+
     if (!res.ok) {
-      console.warn("Google Search returned", res.status);
+      console.warn("Brave Search returned", res.status);
       return "";
     }
 
     const data = await res.json();
-    const items = Array.isArray(data.items) ? data.items : [];
-    if (!items.length) return "";
+    const results = data?.web?.results;
+    if (!Array.isArray(results) || !results.length) return "";
 
-    // Format as numbered list so the model can refer back to a source by number.
-    const lines = items.map((item, i) =>
-      `[${i + 1}] ${item.title}\n${item.snippet || ""}\nSource: ${item.link}`
+    // Format as numbered list so the model can cite sources by number
+    const lines = results.map((item, i) =>
+      `[${i + 1}] ${item.title}\n${item.description || ""}\nSource: ${item.url}`
     );
 
     return lines.join("\n\n");
+
   } catch (err) {
-    console.warn("Google Search fetch error:", err.message);
-    return "";   // non-fatal — answer without search context
+    console.warn("Brave Search error:", err.message);
+    return "";   // non-fatal â€” answer without search context
   }
 }
 
@@ -112,7 +119,7 @@ router.post("/chat", async (req, res) => {
       return res.status(500).json({ error: "Server is not configured with an API key yet." });
     }
 
-    // --- Optional: Google Search for realtime context ---
+    // --- Optional: Brave Search for realtime context ---
     let searchContext = "";
     let searchWasUsed = false;
     if (needsSearch(question)) {
@@ -134,12 +141,12 @@ router.post("/chat", async (req, res) => {
       "list (\"1. \", \"2. \") whenever you are listing steps, parts, or examples. Use **bold** " +
       "for key terms only, not whole sentences. Don't use headings, tables, or code blocks " +
       "unless the question is specifically about code. Keep the tone modern, warm, and " +
-      "encouraging — like a friendly, upbeat tutor texting a student, not a textbook. " +
-      "Sprinkle in a few relevant emojis where they naturally fit (e.g. 👋 for greetings, " +
-      "💡 for a key idea, ✅ for a completed step, 📚 for study tips) — enough to feel " +
+      "encouraging â€” like a friendly, upbeat tutor texting a student, not a textbook. " +
+      "Sprinkle in a few relevant emojis where they naturally fit (e.g. ðŸ‘‹ for greetings, " +
+      "ðŸ’¡ for a key idea, âœ… for a completed step, ðŸ“š for study tips) â€” enough to feel " +
       "lively, but never more than a handful per answer, and never inside code, formulas, " +
       "or numeric results. Earlier turns of this conversation may be included before the " +
-      "latest question — use them to resolve references like \"he\", \"that\", or \"the " +
+      "latest question â€” use them to resolve references like \"he\", \"that\", or \"the " +
       "second one\", and to keep answers consistent with what was already said.";
 
     const systemContent = searchWasUsed
