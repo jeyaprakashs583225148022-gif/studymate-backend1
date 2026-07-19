@@ -3,7 +3,13 @@ const router = express.Router();
 
 const GROQ_API_KEY   = process.env.GROQ_API_KEY;
 const GROQ_MODEL     = process.env.GROQ_MODEL || "openai/gpt-oss-20b";
+// Used automatically instead of GROQ_MODEL whenever the person attaches a
+// photo, since the regular text model can't see images. Llama 4 Scout is
+// Groq's vision-capable chat model as of writing — override via env if
+// Groq's lineup has moved on by the time you're reading this.
+const GROQ_VISION_MODEL = process.env.GROQ_VISION_MODEL || "meta-llama/llama-4-scout-17b-16e-instruct";
 const GROQ_URL       = "https://api.groq.com/openai/v1/chat/completions";
+const MAX_IMAGES = 4;
 
 const TAVILY_API_KEY = process.env.TAVILY_API_KEY;
 const TAVILY_URL     = "https://api.tavily.com/search";
@@ -104,9 +110,31 @@ router.post("/chat", async (req, res) => {
       return res.status(500).json({ error: "Server is not configured with an API key yet." });
     }
 
+    // --- Optional attachments: photos, an uploaded file's text, or a link's text ---
+    const images = Array.isArray(req.body?.images)
+      ? req.body.images.filter(u => typeof u === "string" && u.startsWith("data:image/")).slice(0, MAX_IMAGES)
+      : [];
+
+    let fileContext = null;
+    if (req.body?.fileContext && typeof req.body.fileContext.text === "string") {
+      fileContext = {
+        name: (req.body.fileContext.name || "uploaded file").toString().slice(0, 120),
+        text: req.body.fileContext.text.toString().slice(0, 12000)
+      };
+    }
+
+    let urlContext = null;
+    if (req.body?.urlContext && typeof req.body.urlContext.content === "string") {
+      urlContext = {
+        url: (req.body.urlContext.url || "").toString().slice(0, 500),
+        title: (req.body.urlContext.title || "").toString().slice(0, 200),
+        content: req.body.urlContext.content.toString().slice(0, 8000)
+      };
+    }
+
     let searchContext = "";
     let searchWasUsed = false;
-    if (needsSearch(question)) {
+    if (!images.length && needsSearch(question)) {
       searchContext = await fetchSearchContext(question);
       searchWasUsed = !!searchContext;
     }
@@ -122,23 +150,59 @@ router.post("/chat", async (req, res) => {
       "list (\"1. \", \"2. \") whenever you are listing steps, parts, or examples. Use **bold** " +
       "for key terms only, not whole sentences. Don't use headings, tables, or code blocks " +
       "unless the question is specifically about code. Keep the tone modern, warm, and " +
-      "encouraging â€” like a friendly, upbeat tutor texting a student, not a textbook. " +
-      "Sprinkle in a few relevant emojis where they naturally fit (e.g. ðŸ‘‹ for greetings, " +
-      "ðŸ’¡ for a key idea, âœ… for a completed step, ðŸ“š for study tips) â€” enough to feel " +
+      "encouraging — like a friendly, upbeat tutor texting a student, not a textbook. " +
+      "Sprinkle in a few relevant emojis where they naturally fit (e.g. 👋 for greetings, " +
+      "💡 for a key idea, ✅ for a completed step, 📚 for study tips) — enough to feel " +
       "lively, but never more than a handful per answer, and never inside code, formulas, " +
       "or numeric results. Earlier turns of this conversation may be included before the " +
-      "latest question â€” use them to resolve references like \"he\", \"that\", or \"the " +
+      "latest question — use them to resolve references like \"he\", \"that\", or \"the " +
       "second one\", and to keep answers consistent with what was already said.";
 
-    const systemContent = searchWasUsed
-      ? basePersonality +
+    let systemContent = basePersonality;
+
+    if (searchWasUsed) {
+      systemContent +=
         "\n\n--- LIVE WEB SEARCH RESULTS (fetched just now for this question) ---\n" +
         searchContext +
         "\n--- END OF SEARCH RESULTS ---\n\n" +
         "Use the search results above to ground your answer in current, accurate information. " +
         "Cite the source number in brackets (e.g. [1]) when you use a fact from a result. " +
-        "If the search results don't cover the question well, use your own knowledge and say so."
-      : basePersonality;
+        "If the search results don't cover the question well, use your own knowledge and say so.";
+    }
+
+    if (fileContext) {
+      systemContent +=
+        `\n\n--- TEXT FROM A FILE THE STUDENT UPLOADED (\"${fileContext.name}\") ---\n` +
+        fileContext.text +
+        "\n--- END OF FILE ---\n\n" +
+        "Use the file content above to answer the student's question about it (e.g. summarizing, " +
+        "explaining, or quizzing them on it). If the question doesn't relate to the file, ignore it.";
+    }
+
+    if (urlContext) {
+      systemContent +=
+        `\n\n--- TEXT READ FROM A LINK THE STUDENT SHARED (${urlContext.title || urlContext.url}) ---\n` +
+        urlContext.content +
+        "\n--- END OF PAGE CONTENT ---\n\n" +
+        "The student pasted the link above; its page content was fetched automatically. Use it to answer " +
+        "their question (e.g. summarize it, explain it, or answer what they asked about it).";
+    }
+
+    if (images.length) {
+      systemContent +=
+        "\n\nThe student has also attached one or more photos to this message — look at them carefully " +
+        "(e.g. read handwriting, diagrams, textbook pages, or homework problems) and use them to answer.";
+    }
+
+    // Build the final user turn. Plain text when there's no image; an
+    // OpenAI-style multimodal content array (text + image_url parts) when
+    // there is one, which is what Groq's vision models expect.
+    const userTurn = images.length
+      ? { role: "user", content: [
+            { type: "text", text: question },
+            ...images.map(url => ({ type: "image_url", image_url: { url } }))
+          ] }
+      : { role: "user", content: question };
 
     const upstream = await fetch(GROQ_URL, {
       method: "POST",
@@ -147,13 +211,16 @@ router.post("/chat", async (req, res) => {
         "Authorization": "Bearer " + GROQ_API_KEY
       },
       body: JSON.stringify({
-        model:       GROQ_MODEL,
+        model:       images.length ? GROQ_VISION_MODEL : GROQ_MODEL,
         temperature: 0.3,
         max_tokens:  2000,
         messages: [
           { role: "system", content: systemContent },
-          ...history,
-          { role: "user", content: question }
+          // Vision models are pickier about mixed-content history, and a
+          // photo's own message already carries all the context it needs,
+          // so skip prior turns on image requests to keep it reliable.
+          ...(images.length ? [] : history),
+          userTurn
         ]
       })
     });
