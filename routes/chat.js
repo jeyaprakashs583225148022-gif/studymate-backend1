@@ -4,10 +4,10 @@ const router = express.Router();
 const GROQ_API_KEY   = process.env.GROQ_API_KEY;
 const GROQ_MODEL     = process.env.GROQ_MODEL || "openai/gpt-oss-20b";
 // Used automatically instead of GROQ_MODEL whenever the person attaches a
-// photo, since the regular text model can't see images. Llama 4 Scout is
-// Groq's vision-capable chat model as of writing — override via env if
-// Groq's lineup has moved on by the time you're reading this.
-const GROQ_VISION_MODEL = process.env.GROQ_VISION_MODEL || "meta-llama/llama-4-scout-17b-16e-instruct";
+// photo, since the regular text model can't see images. qwen/qwen3.6-27b is
+// Groq's current vision-capable chat model (Llama 4 Scout/Maverick were
+// deprecated) — override via env if Groq's lineup has moved on since.
+const GROQ_VISION_MODEL = process.env.GROQ_VISION_MODEL || "qwen/qwen3.6-27b";
 const GROQ_URL       = "https://api.groq.com/openai/v1/chat/completions";
 const MAX_IMAGES = 4;
 
