@@ -214,6 +214,11 @@ router.post("/chat", async (req, res) => {
         model:       images.length ? GROQ_VISION_MODEL : GROQ_MODEL,
         temperature: 0.3,
         max_tokens:  2000,
+        // qwen/qwen3.6-27b (our vision model) is a reasoning model — without
+        // this it can return its raw "<think>...</think>" scratch-work as
+        // part of the answer, which looked like a wrong/garbled reply.
+        // "hidden" makes Groq return only the final answer.
+        ...(images.length ? { reasoning_format: "hidden" } : {}),
         messages: [
           { role: "system", content: systemContent },
           // Vision models are pickier about mixed-content history, and a
@@ -238,6 +243,11 @@ router.post("/chat", async (req, res) => {
     if (!answer) {
       return res.status(502).json({ error: "No answer returned from the AI provider." });
     }
+
+    // Belt-and-braces: strip any reasoning scratch-work the model still
+    // included (e.g. <think>...</think>) even though we asked Groq to hide it,
+    // so it never leaks into what the student sees.
+    answer = answer.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
 
     answer = answer
       .split("\n")
