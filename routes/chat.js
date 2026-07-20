@@ -191,7 +191,16 @@ router.post("/chat", async (req, res) => {
     if (images.length) {
       systemContent +=
         "\n\nThe student has also attached one or more photos to this message — look at them carefully " +
-        "(e.g. read handwriting, diagrams, textbook pages, or homework problems) and use them to answer.";
+        "(e.g. read handwriting, diagrams, textbook pages, homework problems, or objects/scenes) and use them " +
+        "to answer.\n\n" +
+        "IMPORTANT — do not guess at real people's identities: you cannot reliably recognize who a specific " +
+        "real person in a photo is, and confidently naming the wrong person (or inventing biographical details " +
+        "about them) is much worse than saying you're not sure. So if the photo shows a person and the student " +
+        "asks who they are: do NOT state a specific name, movie, or biography as fact unless there is " +
+        "unmistakable on-image text confirming it (e.g. a name tag, caption, or credits). Otherwise, say plainly " +
+        "that you can't reliably identify real people from photos, and instead describe what you *can* see " +
+        "(appearance, setting, clothing, mood, any visible text) and offer to help if they tell you who it is. " +
+        "Never fabricate a name, film, or backstory to sound more helpful.";
     }
 
     // Build the final user turn. Plain text when there's no image; an
