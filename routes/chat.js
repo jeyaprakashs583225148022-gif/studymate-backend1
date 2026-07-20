@@ -1,14 +1,11 @@
 const express = require("express");
 const router = express.Router();
 
-const GROQ_API_KEY   = process.env.GROQ_API_KEY;
-const GROQ_MODEL     = process.env.GROQ_MODEL || "openai/gpt-oss-20b";
-// Used automatically instead of GROQ_MODEL whenever the person attaches a
-// photo, since the regular text model can't see images. qwen/qwen3.6-27b is
-// Groq's current vision-capable chat model (Llama 4 Scout/Maverick were
-// deprecated) — override via env if Groq's lineup has moved on since.
-const GROQ_VISION_MODEL = process.env.GROQ_VISION_MODEL || "qwen/qwen3.6-27b";
-const GROQ_URL       = "https://api.groq.com/openai/v1/chat/completions";
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+// gemini-2.5-flash is multimodal (text + images) on its own, so unlike Groq
+// there's no separate "vision model" needed — one model handles both.
+const GEMINI_MODEL   = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const GEMINI_URL      = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 const MAX_IMAGES = 4;
 
 const TAVILY_API_KEY = process.env.TAVILY_API_KEY;
@@ -106,7 +103,7 @@ router.post("/chat", async (req, res) => {
       })
       .filter(Boolean);
 
-    if (!GROQ_API_KEY) {
+    if (!GEMINI_API_KEY) {
       return res.status(500).json({ error: "Server is not configured with an API key yet." });
     }
 
@@ -119,7 +116,7 @@ router.post("/chat", async (req, res) => {
     if (req.body?.fileContext && typeof req.body.fileContext.text === "string") {
       fileContext = {
         name: (req.body.fileContext.name || "uploaded file").toString().slice(0, 120),
-        text: req.body.fileContext.text.toString().slice(0, 12000)
+        text: req.body.fileContext.text.toString().slice(0, 6000) // trimmed to conserve tokens on the free tier
       };
     }
 
@@ -128,7 +125,7 @@ router.post("/chat", async (req, res) => {
       urlContext = {
         url: (req.body.urlContext.url || "").toString().slice(0, 500),
         title: (req.body.urlContext.title || "").toString().slice(0, 200),
-        content: req.body.urlContext.content.toString().slice(0, 8000)
+        content: req.body.urlContext.content.toString().slice(0, 4000) // trimmed to conserve tokens on the free tier
       };
     }
 
@@ -190,77 +187,81 @@ router.post("/chat", async (req, res) => {
 
     if (images.length) {
       systemContent +=
-        "\n\nThe student has also attached one or more photos to this message — look at them carefully " +
-        "(e.g. read handwriting, diagrams, textbook pages, homework problems, or objects/scenes) and use them " +
-        "to answer.\n\n" +
-        "IMPORTANT — be careful about naming real people in photos. Confidently naming the wrong person (or " +
-        "inventing biographical details) is much worse than admitting uncertainty. Use this rule:\n" +
-        "  • If the photo unmistakably shows a globally famous, iconic figure you're genuinely confident about " +
-        "(e.g. a well-known historical figure, world leader, or celebrity whose face is instantly recognizable " +
-        "worldwide — the kind of person almost anyone would recognize on sight) — go ahead and name them, and you " +
-        "may share well-known, widely documented facts about them.\n" +
-        "  • For anyone else — an ordinary person, a less globally famous face, a regional/local celebrity you're " +
-        "not fully sure of, or any photo where you have real doubt — do NOT state a specific name, film, or " +
-        "biography as fact. Say plainly that you're not confident who it is, describe what you *can* see " +
-        "(appearance, setting, clothing, mood, any visible text), and offer to help further if the student tells " +
-        "you who it is.\n" +
-        "  • Never invent a name, film, or backstory just to sound more helpful — when genuinely unsure, say so.";
+        "\n\nThe student attached photo(s) — look carefully (handwriting, diagrams, textbook pages, " +
+        "homework, objects/scenes) and use them to answer.\n\n" +
+        "IMPORTANT on naming real people: confidently naming the wrong person is worse than admitting " +
+        "doubt. Only state a specific name/biography if it's a globally iconic, unmistakable figure you're " +
+        "genuinely confident about. Otherwise, say you're not confident who it is, describe what you *can* " +
+        "see, and ask them to tell you. Never invent a name or backstory.";
     }
 
-    // Build the final user turn. Plain text when there's no image; an
-    // OpenAI-style multimodal content array (text + image_url parts) when
-    // there is one, which is what Groq's vision models expect.
-    const userTurn = images.length
-      ? { role: "user", content: [
-            { type: "text", text: question },
-            ...images.map(url => ({ type: "image_url", image_url: { url } }))
-          ] }
-      : { role: "user", content: question };
+    // Gemini uses "user"/"model" roles (not "assistant") and wraps each
+    // message's content in a "parts" array instead of a plain string.
+    const historyContents = history.map(m => ({
+      role: m.role === "assistant" ? "model" : "user",
+      parts: [{ text: m.content }]
+    }));
 
-    const upstream = await fetch(GROQ_URL, {
+    // Build the final user turn's parts: the question text, plus any
+    // attached photos as inline base64 data (Gemini's multimodal format).
+    const userParts = [{ text: question }];
+    for (const dataUrl of images) {
+      const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+      if (match) {
+        userParts.push({ inline_data: { mime_type: match[1], data: match[2] } });
+      }
+    }
+
+    const upstream = await fetch(`${GEMINI_URL}?key=${GEMINI_API_KEY}`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + GROQ_API_KEY
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model:       images.length ? GROQ_VISION_MODEL : GROQ_MODEL,
-        temperature: 0.3,
-        max_tokens:  2000,
-        // qwen/qwen3.6-27b (our vision model) is a reasoning model — without
-        // this it can return its raw "<think>...</think>" scratch-work as
-        // part of the answer, which looked like a wrong/garbled reply.
-        // "hidden" makes Groq return only the final answer.
-        ...(images.length ? { reasoning_format: "hidden" } : {}),
-        messages: [
-          { role: "system", content: systemContent },
-          // Vision models are pickier about mixed-content history, and a
-          // photo's own message already carries all the context it needs,
-          // so skip prior turns on image requests to keep it reliable.
-          ...(images.length ? [] : history),
-          userTurn
-        ]
+        system_instruction: { parts: [{ text: systemContent }] },
+        contents: [
+          ...historyContents,
+          { role: "user", parts: userParts }
+        ],
+        generationConfig: {
+          temperature: 0.3,
+          maxOutputTokens: 1200
+        }
       })
     });
 
     if (!upstream.ok) {
       let detail = "";
       try { detail = (await upstream.json())?.error?.message || ""; } catch (_) { /* ignore */ }
-      console.error("Groq request failed:", upstream.status, detail);
+      console.error("Gemini request failed:", upstream.status, detail);
+
+      // Free-tier Gemini keys share a requests-per-minute budget too — give a
+      // clear, distinct message instead of a generic failure the frontend
+      // would otherwise mask with a canned offline answer that looks broken.
+      if (upstream.status === 429) {
+        return res.status(429).json({
+          error: "rate_limited",
+          message: "The AI is at its free-tier request limit for the next few seconds — please wait about 10-15 seconds and try again."
+        });
+      }
+
       return res.status(502).json({ error: "Upstream AI request failed" + (detail ? ": " + detail : "") });
     }
 
     const data = await upstream.json();
-    let answer = data?.choices?.[0]?.message?.content;
+
+    // Gemini can refuse/stop for safety reasons with no text content at all —
+    // surface that distinctly instead of a generic "no answer" message.
+    const finishReason = data?.candidates?.[0]?.finishReason;
+    let answer = (data?.candidates?.[0]?.content?.parts || [])
+      .map(p => p.text || "")
+      .join("")
+      .trim();
 
     if (!answer) {
+      if (finishReason === "SAFETY" || finishReason === "PROHIBITED_CONTENT") {
+        return res.status(502).json({ error: "The AI couldn't answer that question." });
+      }
       return res.status(502).json({ error: "No answer returned from the AI provider." });
     }
-
-    // Belt-and-braces: strip any reasoning scratch-work the model still
-    // included (e.g. <think>...</think>) even though we asked Groq to hide it,
-    // so it never leaks into what the student sees.
-    answer = answer.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
 
     answer = answer
       .split("\n")
