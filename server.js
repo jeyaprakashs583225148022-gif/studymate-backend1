@@ -5,6 +5,7 @@ const cors = require("cors");
 const rateLimit = require("express-rate-limit");
 const chatRoute = require("./routes/chat");
 const readUrlRoute = require("./routes/readUrl");
+const exportRoute = require("./routes/export");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -43,6 +44,15 @@ const readUrlLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: "Too many requests — please slow down and try again in a bit." }
 });
+// File generation (docx/xlsx/pptx/zip) is heavier on the server than a
+// normal chat reply, so it gets its own, slightly tighter limit.
+const exportLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many export requests — please slow down and try again in a bit." }
+});
 
 app.get("/", (req, res) => {
   res.json({ status: "ok", service: "StudyMate AI backend" });
@@ -50,6 +60,7 @@ app.get("/", (req, res) => {
 
 app.use("/api", chatLimiter, chatRoute);
 app.use("/api", readUrlLimiter, readUrlRoute);
+app.use("/api", exportLimiter, exportRoute);
 
 app.listen(PORT, () => {
   console.log(`StudyMate AI backend listening on port ${PORT}`);
