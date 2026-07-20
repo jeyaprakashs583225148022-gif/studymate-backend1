@@ -193,14 +193,18 @@ router.post("/chat", async (req, res) => {
         "\n\nThe student has also attached one or more photos to this message — look at them carefully " +
         "(e.g. read handwriting, diagrams, textbook pages, homework problems, or objects/scenes) and use them " +
         "to answer.\n\n" +
-        "IMPORTANT — do not guess at real people's identities: you cannot reliably recognize who a specific " +
-        "real person in a photo is, and confidently naming the wrong person (or inventing biographical details " +
-        "about them) is much worse than saying you're not sure. So if the photo shows a person and the student " +
-        "asks who they are: do NOT state a specific name, movie, or biography as fact unless there is " +
-        "unmistakable on-image text confirming it (e.g. a name tag, caption, or credits). Otherwise, say plainly " +
-        "that you can't reliably identify real people from photos, and instead describe what you *can* see " +
-        "(appearance, setting, clothing, mood, any visible text) and offer to help if they tell you who it is. " +
-        "Never fabricate a name, film, or backstory to sound more helpful.";
+        "IMPORTANT — be careful about naming real people in photos. Confidently naming the wrong person (or " +
+        "inventing biographical details) is much worse than admitting uncertainty. Use this rule:\n" +
+        "  • If the photo unmistakably shows a globally famous, iconic figure you're genuinely confident about " +
+        "(e.g. a well-known historical figure, world leader, or celebrity whose face is instantly recognizable " +
+        "worldwide — the kind of person almost anyone would recognize on sight) — go ahead and name them, and you " +
+        "may share well-known, widely documented facts about them.\n" +
+        "  • For anyone else — an ordinary person, a less globally famous face, a regional/local celebrity you're " +
+        "not fully sure of, or any photo where you have real doubt — do NOT state a specific name, film, or " +
+        "biography as fact. Say plainly that you're not confident who it is, describe what you *can* see " +
+        "(appearance, setting, clothing, mood, any visible text), and offer to help further if the student tells " +
+        "you who it is.\n" +
+        "  • Never invent a name, film, or backstory just to sound more helpful — when genuinely unsure, say so.";
     }
 
     // Build the final user turn. Plain text when there's no image; an
