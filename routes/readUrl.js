@@ -47,11 +47,57 @@ function htmlToText(html) {
   return text;
 }
 
+// Returns { videoId } if the URL is a YouTube watch/share link, else null.
+function getYouTubeVideoId(rawUrl) {
+  try {
+    const u = new URL(rawUrl);
+    const host = u.hostname.replace(/^www\./, "").toLowerCase();
+    if (host === "youtu.be") {
+      const id = u.pathname.slice(1);
+      return id ? id : null;
+    }
+    if (host === "youtube.com" || host === "m.youtube.com" || host === "music.youtube.com") {
+      if (u.pathname === "/watch") return u.searchParams.get("v");
+      const shortsMatch = u.pathname.match(/^\/shorts\/([^/]+)/);
+      if (shortsMatch) return shortsMatch[1];
+    }
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
 router.post("/read-url", async (req, res) => {
   try {
     const rawUrl = (req.body?.url || "").toString().trim();
     if (!rawUrl) return res.status(400).json({ error: "Missing 'url' in request body." });
     if (!isSafeUrl(rawUrl)) return res.status(400).json({ error: "That link can't be fetched." });
+
+    // YouTube pages are rendered by JavaScript, so a plain HTML fetch comes
+    // back almost empty. Use YouTube's public oEmbed endpoint instead, which
+    // reliably returns the title and channel name without needing an API key.
+    const videoId = getYouTubeVideoId(rawUrl);
+    if (videoId) {
+      try {
+        const oembedRes = await fetch(
+          "https://www.youtube.com/oembed?url=" + encodeURIComponent(rawUrl) + "&format=json",
+          { signal: AbortSignal.timeout(8000) }
+        );
+        if (oembedRes.ok) {
+          const info = await oembedRes.json();
+          const content =
+            `Title: ${info.title || "(unknown)"}\n` +
+            `Channel: ${info.author_name || "(unknown)"}\n\n` +
+            "Note: only the video's title and channel were available automatically — the full video/transcript " +
+            "content could not be read, so answer using this metadata plus your general knowledge, and be upfront " +
+            "with the student that you don't have the full video content.";
+          return res.json({ title: info.title || "", content, url: rawUrl, isYouTube: true });
+        }
+      } catch (e) {
+        // fall through to the generic error below
+      }
+      return res.status(422).json({ error: "Couldn't fetch details for that YouTube video." });
+    }
 
     const upstream = await fetch(rawUrl, {
       redirect: "follow",
