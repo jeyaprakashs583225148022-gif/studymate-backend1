@@ -2,9 +2,10 @@ const express = require("express");
 const router = express.Router();
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-// gemini-2.5-flash is multimodal (text + images) on its own, so unlike Groq
-// there's no separate "vision model" needed — one model handles both.
-const GEMINI_MODEL   = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+// gemini-2.5-flash was retired for new API keys — gemini-3.5-flash is the
+// current stable, generally-available model (also multimodal: handles text
+// and images in one model, so no separate "vision model" is needed).
+const GEMINI_MODEL   = process.env.GEMINI_MODEL || "gemini-3.5-flash";
 const GEMINI_URL      = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 const MAX_IMAGES = 4;
 
@@ -188,11 +189,14 @@ router.post("/chat", async (req, res) => {
     if (images.length) {
       systemContent +=
         "\n\nThe student attached photo(s) — look carefully (handwriting, diagrams, textbook pages, " +
-        "homework, objects/scenes) and use them to answer.\n\n" +
-        "IMPORTANT on naming real people: confidently naming the wrong person is worse than admitting " +
-        "doubt. Only state a specific name/biography if it's a globally iconic, unmistakable figure you're " +
-        "genuinely confident about. Otherwise, say you're not confident who it is, describe what you *can* " +
-        "see, and ask them to tell you. Never invent a name or backstory.";
+        "homework, objects/scenes, faces) and use them to answer.\n\n" +
+        "IMPORTANT on naming real people: you have strong visual recognition, so if the photo clearly " +
+        "shows a well-known public figure — a political leader, historical figure, actor, athlete, or " +
+        "other celebrity you recognize with genuine confidence — go ahead and name them and share a " +
+        "couple of accurate, relevant facts. Do NOT hedge or refuse to name someone just because they're " +
+        "famous. The caution only applies to people who are NOT public figures (e.g. a random photo of an " +
+        "ordinary private person): for those, don't guess an identity — describe what you see and ask the " +
+        "student who it is instead. Never invent a name, title, or biography for anyone.";
     }
 
     // Gemini uses "user"/"model" roles (not "assistant") and wraps each
